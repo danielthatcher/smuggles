@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,12 +10,12 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"net/url"
 	"os"
 	"sync"
 	"time"
 
 	flag "github.com/spf13/pflag"
-	"github.com/tomnomnom/rawhttp"
 )
 
 var mutations map[string]string
@@ -26,18 +27,16 @@ type baseResult struct {
 
 // baseWorker fetches urls on a channel and times how long it takes to fetch those URLs
 func baseWorker(urls <-chan string, results chan<- baseResult, errs chan<- error, done func()) {
-	for u := range urls {
-		req, err := rawhttp.FromURL("GET", u)
+	for uStr := range urls {
+		u, err := url.Parse(uStr)
 		if err != nil {
 			errs <- err
 			continue
 		}
 
-		req.AddHeader("User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.135 Safari/537.36 Edge/12.246")
-		req.AutoSetHost()
-		req.Timeout = 5 * time.Second
+		req := baseReq(u)
 		start := time.Now()
-		_, err = rawhttp.Do(req)
+		_, err, _ = sendRequest(req, u, 30*time.Second)
 		end := time.Now()
 		duration := end.Sub(start)
 		if err != nil {
@@ -45,7 +44,7 @@ func baseWorker(urls <-chan string, results chan<- baseResult, errs chan<- error
 			continue
 		}
 
-		results <- baseResult{duration, u}
+		results <- baseResult{duration, uStr}
 	}
 	done()
 }
@@ -63,7 +62,7 @@ const (
 // a single URL using a single method and a single Transfer-Encoding header mutation
 type smuggleTest struct {
 	// The URL to test
-	u string
+	u *url.URL
 
 	// The method to test
 	method string
@@ -84,19 +83,9 @@ type smuggleTest struct {
 func smuggleWorker(tests <-chan smuggleTest, results chan<- smuggleTest, errs chan<- error, done func()) {
 	for t := range tests {
 		// First test for CL.TE
-		req, err := rawhttp.FromURL(t.method, t.u)
-		if err != nil {
-			errs <- err
-			continue
-		}
-		req.AutoSetHost()
-		req.Body = "1\r\nZ\r\nQ"
-		req.AddHeader(mutations[t.mutation])
-		req.AddHeader("Content-Length: 4")
-
-		req.Timeout = t.timeout
-		_, err = rawhttp.Do(req)
-		if err, ok := err.(net.Error); ok && err.Timeout() {
+		req := clte(t.method, t.u, mutations[t.mutation])
+		_, err, isTimeout := sendRequest(req, t.u, t.timeout)
+		if isTimeout {
 			t.status = CLTE
 			results <- t
 			continue
@@ -105,20 +94,10 @@ func smuggleWorker(tests <-chan smuggleTest, results chan<- smuggleTest, errs ch
 			continue
 		}
 
-		// Then test for TECL
-		req, err = rawhttp.FromURL(t.method, t.u)
-		if err != nil {
-			errs <- err
-			continue
-		}
-		req.AutoSetHost()
-		req.Body = "0\r\n\r\nX"
-		req.AddHeader(mutations[t.mutation])
-		req.AddHeader("Content-Length: 6")
-
-		req.Timeout = t.timeout
-		_, err = rawhttp.Do(req)
-		if err, ok := err.(net.Error); ok && err.Timeout() {
+		// First test for TE.CL
+		req = tecl(t.method, t.u, mutations[t.mutation])
+		_, err, isTimeout = sendRequest(req, t.u, t.timeout)
+		if isTimeout {
 			t.status = TECL
 			results <- t
 			continue
@@ -128,6 +107,54 @@ func smuggleWorker(tests <-chan smuggleTest, results chan<- smuggleTest, errs ch
 		}
 	}
 	done()
+}
+
+// sendRequest sends the specified request, but doesn't try to parse the response,
+// and instead just returns it
+func sendRequest(req []byte, u *url.URL, timeout time.Duration) (resp []byte, err error, isTimeout bool) {
+	var cerr error
+	var conn io.ReadWriteCloser
+
+	// This is a pretty ugly hack to just close the connection after the timeout.
+	// Otherwise we just get connections being left open waiting for a response
+	time.AfterFunc(timeout, func() {
+		if conn != nil {
+			conn.Close()
+		}
+	})
+
+	port := u.Port()
+	if port == "" {
+		if u.Scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	target := fmt.Sprintf("%s:%s", u.Hostname(), port)
+	if u.Scheme == "https" {
+		conf := &tls.Config{InsecureSkipVerify: true}
+		conn, cerr = tls.DialWithDialer(&net.Dialer{
+			Timeout: timeout,
+		}, "tcp", target, conf)
+
+	} else {
+		d := net.Dialer{Timeout: timeout}
+		conn, cerr = d.Dial("tcp", target)
+	}
+
+	if cerr != nil {
+		err = cerr
+		return
+	}
+
+	_, err = conn.Write(req)
+	resp, err = ioutil.ReadAll(conn)
+	if err != nil {
+		isTimeout = true
+	}
+	conn.Close()
+	return
 }
 
 func main() {
@@ -250,10 +277,15 @@ func main() {
 
 	// Generate a slice of all the tests to choose from at random
 	tests := make([]smuggleTest, 0)
-	for _, u := range urls {
+	for _, uStr := range urls {
+		u, err := url.Parse(uStr)
+		if err != nil {
+			errs <- err
+			continue
+		}
 		for m := range mutations {
 			for _, v := range *methods {
-				timeout := base[u] + *delay
+				timeout := base[uStr] + *delay
 				t := smuggleTest{
 					u:        u,
 					method:   v,
@@ -297,9 +329,6 @@ func main() {
 	}()
 
 	for t := range testResults {
-		if *verbose {
-			fmt.Printf("Result: %s %s %s %s\n", t.method, t.u, t.mutation, t.status)
-		}
 		if t.status != SAFE {
 			log.Printf("%s %s %s %s\n", t.method, t.u, t.status, t.mutation)
 		}
