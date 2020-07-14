@@ -134,7 +134,7 @@ func main() {
 	workers := flag.IntP("workers", "c", 1, "the number of concurrent workers")
 	outfile := flag.StringP("output", "o", "", "the logfile to write to")
 	verbose := flag.BoolP("verbose", "v", false, "print scanned hosts to stdout")
-	basefile := flag.StringP("base", "b", "smuggly.base", "the base file with request times to use")
+	basefile := flag.StringP("base", "b", "smuggles.base", "the base file with request times to use")
 	methods := flag.StringSliceP("methods", "m", []string{"GET", "POST", "PUT", "DELETE"}, "the methods to test")
 	delay := flag.DurationP("delay", "d", 4*time.Second, "the extra time delay on top of the base time that indicates the service is vulnerable")
 	flag.Parse()

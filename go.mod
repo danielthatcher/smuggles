@@ -1,4 +1,4 @@
-module gitlab.com/dcthatch/smuggly
+module gitlab.com/dcthatch/smuggles
 
 go 1.14
 
