@@ -12,9 +12,11 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"sort"
 	"sync"
 	"time"
 
+	"github.com/ryanuber/go-glob"
 	flag "github.com/spf13/pflag"
 )
 
@@ -163,8 +165,55 @@ func main() {
 	verbose := flag.BoolP("verbose", "v", false, "print scanned hosts to stdout")
 	basefile := flag.StringP("base", "b", "smuggles.base", "the base file with request times to use")
 	methods := flag.StringSliceP("methods", "m", []string{"GET", "POST", "PUT", "DELETE"}, "the methods to test")
-	delay := flag.DurationP("delay", "d", 4*time.Second, "the extra time delay on top of the base time that indicates the service is vulnerable")
+	delay := flag.DurationP("delay", "", 4*time.Second, "the extra time delay on top of the base time that indicates the service is vulnerable")
+	list := flag.BoolP("list", "l", false, "list the enabled mutation names and exit")
+	enabled := flag.StringSliceP("enable", "e", nil, "globs of modules to enable")
+	disabled := flag.StringSliceP("disable", "d", nil, "globs of modules to disable")
 	flag.Parse()
+
+	// Generate the enable mutations
+	all := generateMutations()
+	mutations = make(map[string]string, 0)
+	for m := range all {
+		include := true
+
+		if enabled != nil && len(*enabled) > 0 {
+			include = false
+			for _, e := range *enabled {
+				if glob.Glob(e, m) {
+					include = true
+					break
+				}
+			}
+		}
+
+		if disabled != nil && len(*disabled) > 0 {
+			for _, d := range *disabled {
+				if glob.Glob(d, m) {
+					include = false
+					break
+				}
+			}
+		}
+
+		if include {
+			mutations[m] = all[m]
+		}
+	}
+
+	if *list {
+		keys := make([]string, len(mutations))
+		i := 0
+		for k := range mutations {
+			keys[i] = k
+			i++
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Println(k)
+		}
+		os.Exit(0)
+	}
 
 	urls := make([]string, 0)
 
@@ -273,7 +322,6 @@ func main() {
 
 	// Now smuggle test
 	fmt.Println("Testing smuggling...")
-	mutations = generateMutations()
 
 	// Generate a slice of all the tests to choose from at random
 	tests := make([]smuggleTest, 0)
