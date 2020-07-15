@@ -24,17 +24,21 @@ var mutations map[string]string
 func main() {
 	workers := flag.IntP("workers", "c", 10, "the number of concurrent workers")
 	outfile := flag.StringP("output", "o", "", "the logfile to write to")
+	errfile := flag.StringP("error-log", "", "", "the file to log errors to")
 	verbose := flag.BoolP("verbose", "v", false, "print scanned hosts to stdout")
 	basefile := flag.StringP("base", "b", "smuggles.base", "the base file with request times to use")
 	methods := flag.StringSliceP("methods", "m", []string{"GET", "POST", "PUT", "DELETE"}, "the methods to test")
 	delay := flag.DurationP("delay", "", 5*time.Second, "the extra time delay on top of the base time that indicates the service is vulnerable")
-	list := flag.BoolP("list", "l", false, "list the enabled mutation names and exit")
 	enabled := flag.StringSliceP("enable", "e", nil, "globs of modules to enable")
 	disabled := flag.StringSliceP("disable", "d", nil, "globs of modules to disable")
 	stopAfter := flag.UintP("stop-after", "x", 0, "the number of smuggling vulnerabilities to find in a host before stopping testing on it. This won't cancel already queued tests, so slightly more than this number of vulnerabilities may be found")
 	showProgress := flag.BoolP("progress", "p", false, "show a progress bar instead of outputing discovered vulnerabilities to stdout")
-	gadget := flag.StringP("mutation", "", "", "print the specified Transfer-Encoding header mutation and exit")
+
+	// Early exit flags
 	generatePoc := flag.BoolP("poc", "", false, "generate a PoC from a provided line of the log file of format <method> <url> <desync type> <mutation name> and exit")
+	gadget := flag.StringP("mutation", "", "", "print the specified Transfer-Encoding header mutation and exit")
+	list := flag.BoolP("list", "l", false, "list the enabled mutation names and exit")
+
 	flag.Parse()
 
 	// Generate the enabled mutations
@@ -130,7 +134,8 @@ func main() {
 	urls := make([]*url.URL, 0)
 
 	// Logging
-	log.SetFlags(0)
+	var reslog *log.Logger
+	var errlog *log.Logger
 	if *outfile != "" {
 		f, err := os.OpenFile(*outfile, os.O_WRONLY|os.O_CREATE, 0644)
 		if err != nil {
@@ -143,9 +148,27 @@ func main() {
 			outputs = append(outputs, os.Stdout)
 		}
 		mw := io.MultiWriter(outputs...)
-		log.SetOutput(mw)
+		reslog = log.New(mw, "", 0)
 	} else if *showProgress {
 		fmt.Println("WARNING: progress bar being shown and no output file specified - discovered vulnerabilities will not be outputted anywhere!")
+		reslog = log.New(ioutil.Discard, "", 0)
+	}
+
+	if *errfile != "" {
+		f, err := os.OpenFile(*errfile, os.O_WRONLY|os.O_CREATE, 0644)
+		if err != nil {
+			fmt.Printf("Failed to open error log file: %v\n", err)
+		}
+		defer f.Close()
+		outputs := []io.Writer{f}
+		if !*showProgress {
+			outputs = append(outputs, os.Stdout)
+		}
+
+		mw := io.MultiWriter(outputs...)
+		errlog = log.New(mw, "ERROR:", 0)
+	} else {
+		errlog = log.New(os.Stderr, "ERROR:", 0)
 	}
 
 	// The base times for standard requests
@@ -174,21 +197,20 @@ func main() {
 
 	// Make sure we save the base file on exit
 	defer func() {
-		l := log.New(os.Stderr, "", 0)
 		b, err := json.Marshal(base)
 		if err != nil {
-			l.Printf("Error marshalling base times to JSON: %v\n", err)
+			errlog.Printf("Error marshalling base times to JSON: %v\n", err)
 			return
 		}
 
 		_, err = baseFile.Seek(0, 0)
 		if err != nil {
-			l.Printf("Error seeking to start of file: %v\n", err)
+			errlog.Printf("Error seeking to start of file: %v\n", err)
 		}
 
 		_, err = baseFile.Write(b)
 		if err != nil {
-			l.Printf("Error writing base to file: %v\n", err)
+			errlog.Printf("Error writing base to file: %v\n", err)
 		}
 	}()
 
@@ -214,7 +236,7 @@ func main() {
 			urlStr := scanner.Text()
 			u, err := url.Parse(urlStr)
 			if err != nil {
-				fmt.Printf("ERROR: %v\n", err)
+				errlog.Println(err)
 			}
 			_, exists := base[u.String()]
 			if !exists {
@@ -236,9 +258,8 @@ func main() {
 
 	// Handle errors
 	go func() {
-		l := log.New(os.Stderr, "", 0)
 		for err := range errs {
-			l.Printf("ERROR: %v\n", err)
+			errlog.Println(err)
 		}
 	}()
 
@@ -251,6 +272,8 @@ func main() {
 
 	// Now smuggle test
 	fmt.Println("Testing smuggling...")
+
+	// Counts the number of issues found on each host for use with the -x flag
 	vulns := make(map[string]uint, 0)
 	vulnsMux := sync.RWMutex{}
 
@@ -326,7 +349,7 @@ func main() {
 
 	for t := range testResults {
 		if t.status != SAFE {
-			log.Printf("%s %s %s %s\n", t.method, t.u, t.status, t.mutation)
+			reslog.Printf("%s %s %s %s\n", t.method, t.u, t.status, t.mutation)
 			if *stopAfter > 0 {
 				vulnsMux.Lock()
 				vulns[t.u.String()] += 1
