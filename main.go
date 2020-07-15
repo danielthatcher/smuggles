@@ -11,7 +11,9 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strings"
 	"sync"
+	"text/template"
 	"time"
 
 	"github.com/ryanuber/go-glob"
@@ -23,7 +25,7 @@ var mutations map[string]string
 
 func main() {
 	workers := flag.IntP("workers", "c", 10, "the number of concurrent workers")
-	outfile := flag.StringP("output", "o", "", "the logfile to write to")
+	outfile := flag.StringP("output", "o", "", "the log file to write to")
 	errfile := flag.StringP("error-log", "", "", "the file to log errors to")
 	verbose := flag.BoolP("verbose", "v", false, "print scanned hosts to stdout")
 	basefile := flag.StringP("base", "b", "smuggles.base", "the base file with request times to use")
@@ -32,10 +34,11 @@ func main() {
 	enabled := flag.StringSliceP("enable", "e", nil, "globs of modules to enable")
 	disabled := flag.StringSliceP("disable", "d", nil, "globs of modules to disable")
 	stopAfter := flag.UintP("stop-after", "x", 0, "the number of smuggling vulnerabilities to find in a host before stopping testing on it. This won't cancel already queued tests, so slightly more than this number of vulnerabilities may be found")
-	showProgress := flag.BoolP("progress", "p", false, "show a progress bar instead of outputing discovered vulnerabilities to stdout")
+	showProgress := flag.BoolP("progress", "p", false, "show a progress bar instead of output discovered vulnerabilities to stdout")
 
 	// Early exit flags
 	generatePoc := flag.BoolP("poc", "", false, "generate a PoC from a provided line of the log file of format <method> <url> <desync type> <mutation name> and exit")
+	generateScript := flag.StringP("script", "", "", "generate a Turbo Intruder script using the specified file as a base, to verify the smuggling issue with a 404 request from a provided line of the log file of format <method> <url> <desync type> <mutation name>")
 	gadget := flag.StringP("mutation", "", "", "print the specified Transfer-Encoding header mutation and exit")
 	list := flag.BoolP("list", "l", false, "list the enabled mutation names and exit")
 
@@ -97,10 +100,14 @@ func main() {
 		}
 	}
 
-	if *generatePoc {
+	if *generatePoc || *generateScript != "" {
 		if flag.NArg() != 4 {
-			fmt.Println("Usage: smuggles <method> <url> <desync type> <mutation name>")
-			fmt.Println("e.g.: smuggles GET https://example.com CL.TE lineprefix-space")
+			fmt.Println("Positional arguments should be: <method> <url> <desync type> <mutation name>")
+			if *generatePoc {
+				fmt.Println("e.g.: smuggles --poc GET https://example.com CL.TE lineprefix-space")
+			} else {
+				fmt.Println("e.g.: smuggles --script resources/clte.py GET https://example.com CL.TE lineprefix-space")
+			}
 			os.Exit(1)
 		}
 
@@ -117,18 +124,44 @@ func main() {
 		method := flag.Arg(0)
 		desyncType := flag.Arg(2)
 
-		var req []byte
-		if desyncType == CLTE {
-			req = clte(method, u, mutation)
-		} else if desyncType == TECL {
-			req = tecl(method, u, mutation)
-		} else {
-			fmt.Printf("Unknown desync type: %s\n", desyncType)
-			os.Exit(1)
-		}
+		if *generatePoc {
+			var req []byte
+			if desyncType == CLTE {
+				req = clte(method, u, mutation)
+			} else if desyncType == TECL {
+				req = tecl(method, u, mutation)
+			} else {
+				fmt.Printf("Unknown desync type: %s\n", desyncType)
+				os.Exit(1)
+			}
 
-		fmt.Println(string(req))
-		os.Exit(0)
+			fmt.Println(string(req))
+			os.Exit(0)
+		} else {
+			type scriptParams struct {
+				Host     string
+				Method   string
+				Path     string
+				Mutation string
+			}
+			mutation = strings.ReplaceAll(mutation, "\r", "\\r")
+			mutation = strings.ReplaceAll(mutation, "\n", "\\n")
+			params := scriptParams{
+				Host:     u.Host,
+				Method:   method,
+				Path:     u.Path,
+				Mutation: mutation,
+			}
+
+			t, err := template.ParseFiles(*generateScript)
+			if err != nil {
+				fmt.Printf("Failed to parse template file: %v\n", err)
+			}
+			if err = t.Execute(os.Stdout, params); err != nil {
+				fmt.Printf("Failed to fill script template: %v\n", err)
+			}
+			os.Exit(0)
+		}
 	}
 
 	urls := make([]*url.URL, 0)
