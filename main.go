@@ -83,24 +83,38 @@ func smuggleWorker(tests <-chan smuggleTest, results chan<- smuggleTest, errs ch
 		req := clte(t.method, t.u, mutations[t.mutation])
 		_, err, isTimeout := sendRequest(req, t.u, t.timeout)
 		if isTimeout {
-			t.status = CLTE
-			results <- t
-			continue
+			// Send the verification request
+			req = clteVerify(t.method, t.u, mutations[t.mutation])
+			_, err, verifyTimeout := sendRequest(req, t.u, t.timeout)
+
+			if !verifyTimeout {
+				t.status = CLTE
+				results <- t
+				continue
+			} else if err != nil {
+				errs <- err
+			}
 		} else if err != nil {
 			errs <- err
-			continue
 		}
 
 		// First test for TE.CL
 		req = tecl(t.method, t.u, mutations[t.mutation])
 		_, err, isTimeout = sendRequest(req, t.u, t.timeout)
 		if isTimeout {
-			t.status = TECL
-			results <- t
-			continue
+			// Send the verification request
+			req = teclVerify(t.method, t.u, mutations[t.mutation])
+			_, err, verifyTimeout := sendRequest(req, t.u, t.timeout)
+
+			if !verifyTimeout {
+				t.status = TECL
+				results <- t
+				continue
+			} else if err != nil {
+				errs <- err
+			}
 		} else if err != nil {
 			errs <- err
-			continue
 		}
 	}
 	done()
