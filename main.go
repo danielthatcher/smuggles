@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/ryanuber/go-glob"
+	"github.com/schollz/progressbar/v3"
 	flag "github.com/spf13/pflag"
 )
 
@@ -171,6 +172,7 @@ func main() {
 	enabled := flag.StringSliceP("enable", "e", nil, "globs of modules to enable")
 	disabled := flag.StringSliceP("disable", "d", nil, "globs of modules to disable")
 	stopAfter := flag.UintP("stop-after", "x", 0, "the number of smuggling vulnerabilities to find in a host before stopping testing on it. This won't cancel already queued tests, so slightly more than this number of vulnerabilities may be found")
+	showProgress := flag.BoolP("progress", "p", false, "show a progress bar instead of outputing discovered vulnerabilities to stdout")
 	flag.Parse()
 
 	// Generate the enable mutations
@@ -228,8 +230,14 @@ func main() {
 			os.Exit(1)
 		}
 		defer f.Close()
-		mw := io.MultiWriter(os.Stdout, f)
+		outputs := []io.Writer{f}
+		if !*showProgress {
+			outputs = append(outputs, os.Stdout)
+		}
+		mw := io.MultiWriter(outputs...)
 		log.SetOutput(mw)
+	} else if *showProgress {
+		fmt.Println("WARNING: progress bar being shown and no output file specified - discovered vulnerabilities will not be outputted anywhere!")
 	}
 
 	// The base times for standard requests
@@ -289,6 +297,10 @@ func main() {
 
 	// Read from stdin
 	go func() {
+		var bar *progressbar.ProgressBar
+		if *showProgress {
+			bar = progressbar.Default(-1)
+		}
 		scanner := bufio.NewScanner(os.Stdin)
 		for scanner.Scan() {
 			urlStr := scanner.Text()
@@ -299,6 +311,9 @@ func main() {
 			_, exists := base[u.String()]
 			if !exists {
 				baseUrls <- u
+				if *showProgress {
+					bar.Add(1)
+				}
 			}
 			urls = append(urls, u)
 		}
@@ -365,6 +380,10 @@ func main() {
 
 	// Send tests
 	go func() {
+		var bar *progressbar.ProgressBar
+		if *showProgress {
+			bar = progressbar.Default(int64(len(tests)))
+		}
 		for len(tests) > 0 {
 			rand.Seed(time.Now().Unix())
 			i := rand.Intn(len(tests))
@@ -379,6 +398,9 @@ func main() {
 			}
 			if send {
 				testsChan <- t
+			}
+			if *showProgress {
+				bar.Add(1)
 			}
 			if *verbose {
 				fmt.Printf("Testing: %s %s %s\n", t.method, t.u, t.mutation)
