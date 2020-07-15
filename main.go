@@ -326,6 +326,10 @@ func main() {
 	// Generate a slice of all the tests to choose from at random
 	tests := make([]smuggleTest, 0)
 	for _, uStr := range urls {
+		// We only want to run the tests if we have a base time for this URL
+		if _, ok := base[uStr]; !ok {
+			continue
+		}
 		u, err := url.Parse(uStr)
 		if err != nil {
 			errs <- err
