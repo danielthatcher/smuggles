@@ -24,21 +24,15 @@ var mutations map[string]string
 
 type baseResult struct {
 	t time.Duration
-	u string
+	u *url.URL
 }
 
 // baseWorker fetches urls on a channel and times how long it takes to fetch those URLs
-func baseWorker(urls <-chan string, results chan<- baseResult, errs chan<- error, done func()) {
-	for uStr := range urls {
-		u, err := url.Parse(uStr)
-		if err != nil {
-			errs <- err
-			continue
-		}
-
+func baseWorker(urls <-chan *url.URL, results chan<- baseResult, errs chan<- error, done func()) {
+	for u := range urls {
 		req := baseReq(u)
 		start := time.Now()
-		_, err, _ = sendRequest(req, u, 30*time.Second)
+		_, err, _ := sendRequest(req, u, 30*time.Second)
 		end := time.Now()
 		duration := end.Sub(start)
 		if err != nil {
@@ -46,7 +40,7 @@ func baseWorker(urls <-chan string, results chan<- baseResult, errs chan<- error
 			continue
 		}
 
-		results <- baseResult{duration, uStr}
+		results <- baseResult{duration, u}
 	}
 	done()
 }
@@ -176,6 +170,7 @@ func main() {
 	list := flag.BoolP("list", "l", false, "list the enabled mutation names and exit")
 	enabled := flag.StringSliceP("enable", "e", nil, "globs of modules to enable")
 	disabled := flag.StringSliceP("disable", "d", nil, "globs of modules to disable")
+	stopAfter := flag.UintP("stop-after", "x", 0, "the number of smuggling vulnerabilities to find in a host before stopping testing on it. This won't cancel already queued tests, so slightly more than this number of vulnerabilities may be found")
 	flag.Parse()
 
 	// Generate the enable mutations
@@ -222,7 +217,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	urls := make([]string, 0)
+	urls := make([]*url.URL, 0)
 
 	// Logging
 	log.SetFlags(0)
@@ -239,13 +234,13 @@ func main() {
 
 	// The base times for standard requests
 	var base map[string]time.Duration
-	f, err := os.OpenFile(*basefile, os.O_RDWR|os.O_CREATE, 0644)
+	baseFile, err := os.OpenFile(*basefile, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		fmt.Printf("Failed to open base file: %v\n", err)
 		os.Exit(1)
 	}
-	defer f.Close()
-	jsonBytes, err := ioutil.ReadAll(f)
+	defer baseFile.Close()
+	jsonBytes, err := ioutil.ReadAll(baseFile)
 	if err != nil {
 		fmt.Printf("Failed to read base file: %v\n", err)
 		os.Exit(1)
@@ -270,12 +265,12 @@ func main() {
 			return
 		}
 
-		_, err = f.Seek(0, 0)
+		_, err = baseFile.Seek(0, 0)
 		if err != nil {
 			l.Printf("Error seeking to start of file: %v\n", err)
 		}
 
-		_, err = f.Write(b)
+		_, err = baseFile.Write(b)
 		if err != nil {
 			l.Printf("Error writing base to file: %v\n", err)
 		}
@@ -283,7 +278,7 @@ func main() {
 
 	// Fill in any missing entries in the base file
 	fmt.Println("Getting missing base times...")
-	baseUrls := make(chan string)
+	baseUrls := make(chan *url.URL)
 	errs := make(chan error)
 	baseResults := make(chan baseResult)
 	baseWg := sync.WaitGroup{}
@@ -296,8 +291,12 @@ func main() {
 	go func() {
 		scanner := bufio.NewScanner(os.Stdin)
 		for scanner.Scan() {
-			u := scanner.Text()
-			_, exists := base[u]
+			urlStr := scanner.Text()
+			u, err := url.Parse(urlStr)
+			if err != nil {
+				fmt.Printf("ERROR: %v\n", err)
+			}
+			_, exists := base[u.String()]
 			if !exists {
 				baseUrls <- u
 			}
@@ -321,7 +320,7 @@ func main() {
 	}()
 
 	for r := range baseResults {
-		base[r.u] = r.t
+		base[r.u.String()] = r.t
 		if *verbose {
 			fmt.Printf("%s %d\n", r.u, r.t)
 		}
@@ -329,22 +328,20 @@ func main() {
 
 	// Now smuggle test
 	fmt.Println("Testing smuggling...")
+	vulns := make(map[string]uint, 0)
+	vulnsMux := sync.RWMutex{}
 
 	// Generate a slice of all the tests to choose from at random
 	tests := make([]smuggleTest, 0)
-	for _, uStr := range urls {
+	for _, u := range urls {
 		// We only want to run the tests if we have a base time for this URL
-		if _, ok := base[uStr]; !ok {
+		if _, ok := base[u.String()]; !ok {
 			continue
 		}
-		u, err := url.Parse(uStr)
-		if err != nil {
-			errs <- err
-			continue
-		}
+
 		for m := range mutations {
 			for _, v := range *methods {
-				timeout := base[uStr] + *delay
+				timeout := base[u.String()] + *delay
 				t := smuggleTest{
 					u:        u,
 					method:   v,
@@ -373,7 +370,16 @@ func main() {
 			i := rand.Intn(len(tests))
 			t := tests[i]
 			tests = append(tests[:i], tests[i+1:]...)
-			testsChan <- t
+			send := true
+			if *stopAfter > 0 {
+				vulnsMux.RLock()
+				send = vulns[t.u.String()] < *stopAfter
+				vulnsMux.RUnlock()
+
+			}
+			if send {
+				testsChan <- t
+			}
 			if *verbose {
 				fmt.Printf("Testing: %s %s %s\n", t.method, t.u, t.mutation)
 			}
@@ -390,6 +396,11 @@ func main() {
 	for t := range testResults {
 		if t.status != SAFE {
 			log.Printf("%s %s %s %s\n", t.method, t.u, t.status, t.mutation)
+			if *stopAfter > 0 {
+				vulnsMux.Lock()
+				vulns[t.u.String()] += 1
+				vulnsMux.Unlock()
+			}
 		}
 	}
 }
