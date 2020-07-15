@@ -228,25 +228,6 @@ func main() {
 		base = make(map[string]time.Duration, 0)
 	}
 
-	// Make sure we save the base file on exit
-	defer func() {
-		b, err := json.Marshal(base)
-		if err != nil {
-			errlog.Printf("Error marshalling base times to JSON: %v\n", err)
-			return
-		}
-
-		_, err = baseFile.Seek(0, 0)
-		if err != nil {
-			errlog.Printf("Error seeking to start of file: %v\n", err)
-		}
-
-		_, err = baseFile.Write(b)
-		if err != nil {
-			errlog.Printf("Error writing base to file: %v\n", err)
-		}
-	}()
-
 	// Fill in any missing entries in the base file
 	fmt.Println("Getting missing base times...")
 	baseUrls := make(chan *url.URL)
@@ -302,6 +283,24 @@ func main() {
 			fmt.Printf("%s %d\n", r.u, r.t)
 		}
 	}
+
+	// Save the file
+	b, err := json.Marshal(base)
+	if err != nil {
+		errlog.Printf("Error marshalling base times to JSON: %v\n", err)
+		return
+	}
+
+	_, err = baseFile.Seek(0, 0)
+	if err != nil {
+		errlog.Printf("Error seeking to start of file: %v\n", err)
+	}
+
+	_, err = baseFile.Write(b)
+	if err != nil {
+		errlog.Printf("Error writing base to file: %v\n", err)
+	}
+	baseFile.Close()
 
 	// Now smuggle test
 	fmt.Println("Testing smuggling...")
