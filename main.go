@@ -144,15 +144,19 @@ func sendRequest(req []byte, u *url.URL, timeout time.Duration) (resp []byte, er
 
 	// See if we can read before the timeout
 	c := make(chan []byte)
+	e := make(chan error)
 	go func() {
 		r, err := ioutil.ReadAll(conn)
-		if err == nil {
+		if err != nil {
+			e <- err
+		} else {
 			c <- r
 		}
 	}()
 
 	select {
 	case resp = <-c:
+	case err = <-e:
 	case <-time.After(timeout):
 		isTimeout = true
 		conn.Close()
