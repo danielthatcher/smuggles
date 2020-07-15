@@ -192,6 +192,7 @@ func main() {
 	stopAfter := flag.UintP("stop-after", "x", 0, "the number of smuggling vulnerabilities to find in a host before stopping testing on it. This won't cancel already queued tests, so slightly more than this number of vulnerabilities may be found")
 	showProgress := flag.BoolP("progress", "p", false, "show a progress bar instead of outputing discovered vulnerabilities to stdout")
 	gadget := flag.StringP("mutation", "", "", "print the specified Transfer-Encoding header mutation and exit")
+	generatePoc := flag.BoolP("poc", "", false, "generate a PoC from a provided line of the log file of format <method> <url> <desync type> <mutation name> and exit")
 	flag.Parse()
 
 	// Generate the enable mutations
@@ -247,6 +248,40 @@ func main() {
 			fmt.Println("Mutation not found")
 			os.Exit(1)
 		}
+	}
+
+	if *generatePoc {
+		if flag.NArg() != 4 {
+			fmt.Println("Usage: smuggles <method> <url> <desync type> <mutation name>")
+			fmt.Println("e.g.: smuggles GET https://example.com CL.TE lineprefix-space")
+			os.Exit(1)
+		}
+
+		u, err := url.Parse(flag.Arg(1))
+		if err != nil {
+			fmt.Printf("Couldn't parse URL: %v\n", err)
+			os.Exit(1)
+		}
+		mutation, ok := mutations[flag.Arg(3)]
+		if !ok {
+			fmt.Printf("Mutation %s not found\n", flag.Arg(3))
+			os.Exit(1)
+		}
+		method := flag.Arg(0)
+		desyncType := flag.Arg(2)
+
+		var req []byte
+		if desyncType == CLTE {
+			req = clte(method, u, mutation)
+		} else if desyncType == TECL {
+			req = tecl(method, u, mutation)
+		} else {
+			fmt.Printf("Unknown desync type: %s\n", desyncType)
+			os.Exit(1)
+		}
+
+		fmt.Println(string(req))
+		os.Exit(0)
 	}
 
 	urls := make([]*url.URL, 0)
