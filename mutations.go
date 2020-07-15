@@ -59,7 +59,8 @@ func generateMutations() map[string]string {
 	m["grave"] = "Trànsfer-Encoding: chunked"
 
 	// Misc tricks
-	m["connection"] = "Connection: Transfer-Encoding\r\nTransfer-Encoding: chunked"
+	m["connection-te"] = "Connection: Transfer-Encoding\r\nTransfer-Encoding: chunked"
+	m["connection-cl"] = "Connection: Content-Legth\r\nTransfer-Encoding: chunked"
 	m["content-encoding"] = "Content-Encoding: chunked"
 
 	// Multiple values of Transfer-Encoding
