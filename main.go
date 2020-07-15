@@ -177,6 +177,7 @@ func main() {
 	disabled := flag.StringSliceP("disable", "d", nil, "globs of modules to disable")
 	stopAfter := flag.UintP("stop-after", "x", 0, "the number of smuggling vulnerabilities to find in a host before stopping testing on it. This won't cancel already queued tests, so slightly more than this number of vulnerabilities may be found")
 	showProgress := flag.BoolP("progress", "p", false, "show a progress bar instead of outputing discovered vulnerabilities to stdout")
+	gadget := flag.StringP("mutation", "", "", "print the specified Transfer-Encoding header mutation and exit")
 	flag.Parse()
 
 	// Generate the enable mutations
@@ -221,6 +222,17 @@ func main() {
 			fmt.Println(k)
 		}
 		os.Exit(0)
+	}
+
+	if *gadget != "" {
+		header, ok := mutations[*gadget]
+		if ok {
+			fmt.Println(header)
+			os.Exit(0)
+		} else {
+			fmt.Println("Mutation not found")
+			os.Exit(1)
+		}
 	}
 
 	urls := make([]*url.URL, 0)
