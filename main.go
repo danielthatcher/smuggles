@@ -117,14 +117,6 @@ func sendRequest(req []byte, u *url.URL, timeout time.Duration) (resp []byte, er
 	var cerr error
 	var conn io.ReadWriteCloser
 
-	// This is a pretty ugly hack to just close the connection after the timeout.
-	// Otherwise we just get connections being left open waiting for a response
-	time.AfterFunc(timeout, func() {
-		if conn != nil {
-			conn.Close()
-		}
-	})
-
 	port := u.Port()
 	if port == "" {
 		if u.Scheme == "https" {
@@ -151,11 +143,26 @@ func sendRequest(req []byte, u *url.URL, timeout time.Duration) (resp []byte, er
 	}
 
 	_, err = conn.Write(req)
-	resp, err = ioutil.ReadAll(conn)
 	if err != nil {
-		isTimeout = true
+		return
 	}
-	conn.Close()
+
+	// See if we can read before the timeout
+	c := make(chan []byte)
+	go func() {
+		r, err := ioutil.ReadAll(conn)
+		if err == nil {
+			c <- r
+		}
+	}()
+
+	select {
+	case resp = <-c:
+	case <-time.After(timeout):
+		isTimeout = true
+		conn.Close()
+	}
+
 	return
 }
 
