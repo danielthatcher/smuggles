@@ -23,6 +23,7 @@ import (
 )
 
 var mutations map[string]string
+var debug *bool
 
 func main() {
 	// Scanning options
@@ -36,6 +37,7 @@ func main() {
 	// Output display options
 	showProgress := flag.BoolP("progress", "p", false, "show a progress bar instead of output discovered vulnerabilities to stdout")
 	verbose := flag.BoolP("verbose", "v", false, "print scanned hosts to stdout")
+	debug = flag.BoolP("debug", "", false, "time each request and output the times to stdout")
 
 	// Output file options
 	outfilename := flag.StringP("output", "o", "", "the log file to write to")

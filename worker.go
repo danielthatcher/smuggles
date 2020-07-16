@@ -155,12 +155,24 @@ func sendRequest(req []byte, u *url.URL, timeout time.Duration) (resp []byte, er
 		}
 	}()
 
+	var start time.Time
+	if *debug {
+		start = time.Now()
+	}
+
 	select {
 	case resp = <-c:
 	case err = <-e:
 	case <-time.After(timeout):
 		isTimeout = true
 		conn.Close()
+	}
+
+	if *debug {
+		d := time.Now().Sub(start)
+		fmt.Printf("Request to %s took %dms\n", u.String(), d.Milliseconds())
+		fmt.Println(string(req))
+		fmt.Println("---")
 	}
 
 	return
