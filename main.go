@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"net/url"
 	"os"
+	"path"
 	"sort"
 	"strings"
 	"sync"
@@ -24,17 +25,23 @@ import (
 var mutations map[string]string
 
 func main() {
+	// Scanning options
 	workers := flag.IntP("workers", "c", 10, "the number of concurrent workers")
-	outfile := flag.StringP("output", "o", "", "the log file to write to")
-	errfile := flag.StringP("error-log", "", "", "the file to log errors to")
-	verbose := flag.BoolP("verbose", "v", false, "print scanned hosts to stdout")
-	basefile := flag.StringP("base", "b", "smuggles.base", "the base file with request times to use")
 	methods := flag.StringSliceP("methods", "m", []string{"GET", "POST", "PUT", "DELETE"}, "the methods to test")
 	delay := flag.DurationP("delay", "", 5*time.Second, "the extra time delay on top of the base time that indicates the service is vulnerable")
 	enabled := flag.StringSliceP("enable", "e", nil, "globs of modules to enable")
 	disabled := flag.StringSliceP("disable", "d", nil, "globs of modules to disable")
 	stopAfter := flag.UintP("stop-after", "x", 0, "the number of smuggling vulnerabilities to find in a host before stopping testing on it. This won't cancel already queued tests, so slightly more than this number of vulnerabilities may be found")
+
+	// Output display options
 	showProgress := flag.BoolP("progress", "p", false, "show a progress bar instead of output discovered vulnerabilities to stdout")
+	verbose := flag.BoolP("verbose", "v", false, "print scanned hosts to stdout")
+
+	// Output file options
+	outfilename := flag.StringP("output", "o", "", "the log file to write to")
+	basefilename := flag.StringP("base", "b", "", "the base file with request times to use (default \"smuggles.base\")")
+	errfilename := flag.StringP("error-log", "", "", "the file to log errors to")
+	outDir := flag.StringP("dir", "O", "", "the directory to output the log, error log, and base file to")
 
 	// Early exit flags
 	generatePoc := flag.BoolP("poc", "", false, "generate a PoC from a provided line of the log file of format <method> <url> <desync type> <mutation name> and exit")
@@ -169,8 +176,20 @@ func main() {
 	// Logging
 	var reslog *log.Logger
 	var errlog *log.Logger
-	if *outfile != "" {
-		f, err := os.OpenFile(*outfile, os.O_WRONLY|os.O_CREATE, 0644)
+	if *outDir != "" {
+		if *outfilename == "" {
+			*outfilename = path.Join(*outDir, "smuggles.log")
+		}
+		if *basefilename == "" {
+			*basefilename = path.Join(*outDir, "smuggles.base")
+		}
+		if *errfilename == "" {
+			*errfilename = path.Join(*outDir, "smuggles.errors")
+		}
+	}
+
+	if *outfilename != "" {
+		f, err := os.OpenFile(*outfilename, os.O_WRONLY|os.O_CREATE, 0644)
 		if err != nil {
 			fmt.Printf("Failed to open log file: %v\n", err)
 			os.Exit(1)
@@ -187,10 +206,11 @@ func main() {
 		reslog = log.New(ioutil.Discard, "", 0)
 	}
 
-	if *errfile != "" {
-		f, err := os.OpenFile(*errfile, os.O_WRONLY|os.O_CREATE, 0644)
+	if *errfilename != "" {
+		f, err := os.OpenFile(*errfilename, os.O_WRONLY|os.O_CREATE, 0644)
 		if err != nil {
 			fmt.Printf("Failed to open error log file: %v\n", err)
+			os.Exit(1)
 		}
 		defer f.Close()
 		outputs := []io.Writer{f}
@@ -206,7 +226,10 @@ func main() {
 
 	// The base times for standard requests
 	var base map[string]time.Duration
-	baseFile, err := os.OpenFile(*basefile, os.O_RDWR|os.O_CREATE, 0644)
+	if *basefilename == "" {
+		*basefilename = "smuggles.base"
+	}
+	baseFile, err := os.OpenFile(*basefilename, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		fmt.Printf("Failed to open base file: %v\n", err)
 		os.Exit(1)
