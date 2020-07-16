@@ -260,6 +260,7 @@ func main() {
 	baseResults := make(chan baseResult)
 	baseWg := sync.WaitGroup{}
 	baseWg.Add(*workers)
+	baseMux := sync.RWMutex{}
 	for i := 0; i < *workers; i++ {
 		go baseWorker(baseUrls, baseResults, errs, baseWg.Done)
 	}
@@ -277,7 +278,9 @@ func main() {
 			if err != nil {
 				errlog.Println(err)
 			}
+			baseMux.RLock()
 			_, exists := base[u.String()]
+			baseMux.RUnlock()
 			if !exists {
 				baseUrls <- u
 				if *showProgress {
@@ -303,7 +306,9 @@ func main() {
 	}()
 
 	for r := range baseResults {
+		baseMux.Lock()
 		base[r.u.String()] = r.t
+		baseMux.Unlock()
 		if *verbose {
 			fmt.Printf("%s %d\n", r.u, r.t)
 		}
