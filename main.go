@@ -155,10 +155,14 @@ func main() {
 			}
 			mutation = strings.ReplaceAll(mutation, "\r", "\\r")
 			mutation = strings.ReplaceAll(mutation, "\n", "\\n")
+			path := "/"
+			if u.Path != "" {
+				path = u.Path
+			}
 			params := scriptParams{
 				Host:     u.Host,
 				Method:   method,
-				Path:     u.Path,
+				Path:     path,
 				Mutation: mutation,
 			}
 
@@ -206,6 +210,8 @@ func main() {
 	} else if *showProgress {
 		fmt.Println("WARNING: progress bar being shown and no output file specified - discovered vulnerabilities will not be outputted anywhere!")
 		reslog = log.New(ioutil.Discard, "", 0)
+	} else {
+		reslog = log.New(os.Stdout, "", 0)
 	}
 
 	if *errfilename != "" {
