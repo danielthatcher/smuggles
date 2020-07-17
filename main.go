@@ -144,7 +144,7 @@ func main() {
 				os.Exit(1)
 			}
 
-			fmt.Println(string(req))
+			fmt.Printf("%s", string(req))
 			os.Exit(0)
 		} else {
 			type scriptParams struct {
