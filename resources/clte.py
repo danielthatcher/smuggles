@@ -1,3 +1,6 @@
+import random
+random.seed()
+
 RN = "\r\n"
 host = "{{ .Host }}"
 num_attacks = 1
@@ -24,7 +27,7 @@ prefix_body = None # If the prefix_body isn't set, then the newlines required fo
 
 # The standard request sent by a normal user
 victim_method = "GET"
-victim_path = "/?smugglecb=1"
+victim_path = "/?smugglecb=__CB__"
 victim_host = host
 victim_headers = []
 victim_body = None
@@ -86,10 +89,10 @@ def queueRequests(target, wordlists):
                           )
 
     for _ in range(num_attacks):
-        engine.queue(smuggle_req, label="smuggle")
+        engine.queue(smuggle_req.replace("__CB__", str(random.random())), label="smuggle")
 
     for _ in range(num_victim):
-        engine.queue(victim_req, label="victim")
+        engine.queue(victim_req.replace("__CB__", str(random.random())), label="victim")
         time.sleep(sleep)
 
 def handleResponse(req, interesting):
