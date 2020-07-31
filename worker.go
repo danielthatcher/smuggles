@@ -170,7 +170,7 @@ func sendRequest(req []byte, u *url.URL, timeout time.Duration) (resp []byte, er
 
 	if *debug {
 		d := time.Now().Sub(start)
-		fmt.Printf("Request to %s took %dms\n", u.String(), d.Milliseconds())
+		fmt.Printf("Request to %s took %dms (timeout: %t)\n", u.String(), d.Milliseconds(), isTimeout)
 		fmt.Println(string(req))
 		fmt.Println("---")
 	}
