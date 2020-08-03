@@ -12,9 +12,7 @@ import (
 	"os"
 	"path"
 	"sort"
-	"strings"
 	"sync"
-	"text/template"
 	"time"
 
 	"github.com/ryanuber/go-glob"
@@ -75,7 +73,7 @@ func main() {
 
 	// Early exit flags
 	generatePoc := flag.BoolP("poc", "", false, "generate a PoC from a provided line of the log file of format <method> <url> <desync type> <mutation name> and exit")
-	generateScript := flag.StringP("script", "", "", "generate a Turbo Intruder script using the specified file as a base, to verify the smuggling issue with a 404 request from a provided line of the log file of format <method> <url> <desync type> <mutation name>")
+	scriptFile := flag.StringP("script", "", "", "generate a Turbo Intruder script using the specified file as a base, to verify the smuggling issue with a 404 request from a provided line of the log file of format <method> <url> <desync type> <mutation name>")
 	gadget := flag.StringP("mutation", "", "", "print the specified Transfer-Encoding header mutation and exit")
 	list := flag.BoolP("list", "l", false, "list the enabled mutation names and exit")
 
@@ -137,72 +135,37 @@ func main() {
 		}
 	}
 
-	if *generatePoc || *generateScript != "" {
+	if *generatePoc {
 		if flag.NArg() != 4 {
 			fmt.Println("Positional arguments should be: <method> <url> <desync type> <mutation name>")
-			if *generatePoc {
-				fmt.Println("e.g.: smuggles --poc GET https://example.com CL.TE lineprefix-space")
-			} else {
-				fmt.Println("e.g.: smuggles --script resources/clte.py GET https://example.com CL.TE lineprefix-space")
-			}
+			fmt.Println("e.g.: smuggles --poc GET https://example.com CL.TE lineprefix-space")
 			os.Exit(1)
 		}
 
-		u, err := url.Parse(flag.Arg(1))
+		poc, err := generatePoC(conf, flag.Arg(0), flag.Arg(1), flag.Arg(2), flag.Arg(3))
 		if err != nil {
-			fmt.Printf("Couldn't parse URL: %v\n", err)
+			fmt.Printf("Couldn't generate PoC: %v\n", err)
 			os.Exit(1)
 		}
-		mutation, ok := conf.Mutations[flag.Arg(3)]
-		if !ok {
-			fmt.Printf("Mutation %s not found\n", flag.Arg(3))
+		fmt.Printf("%s", string(poc))
+		os.Exit(0)
+	}
+
+	if *scriptFile != "" {
+		if flag.NArg() != 4 {
+			fmt.Println("Positional arguments should be: <method> <url> <desync type> <mutation name>")
+			fmt.Println("e.g.: smuggles --script resources/clte.py GET https://example.com CL.TE lineprefix-space")
 			os.Exit(1)
 		}
-		method := flag.Arg(0)
-		desyncType := flag.Arg(2)
 
-		if *generatePoc {
-			var req []byte
-			if desyncType == CLTE {
-				req = clte(method, u, mutation)
-			} else if desyncType == TECL {
-				req = tecl(method, u, mutation)
-			} else {
-				fmt.Printf("Unknown desync type: %s\n", desyncType)
-				os.Exit(1)
-			}
-
-			fmt.Printf("%s", string(req))
-			os.Exit(0)
-		} else {
-			type scriptParams struct {
-				Host     string
-				Method   string
-				Path     string
-				Mutation string
-			}
-			mutation = strings.ReplaceAll(mutation, "\r", "\\r")
-			mutation = strings.ReplaceAll(mutation, "\n", "\\n")
-			path := "/"
-			if u.Path != "" {
-				path = u.Path
-			}
-			params := scriptParams{
-				Host:     u.Host,
-				Method:   method,
-				Path:     path,
-				Mutation: mutation,
-			}
-
-			t, err := template.ParseFiles(*generateScript)
-			if err != nil {
-				fmt.Printf("Failed to parse template file: %v\n", err)
-			}
-			if err = t.Execute(os.Stdout, params); err != nil {
-				fmt.Printf("Failed to fill script template: %v\n", err)
-			}
-			os.Exit(0)
+		script, err := generateScript(conf, *scriptFile, flag.Arg(0), flag.Arg(1), flag.Arg(3))
+		if err != nil {
+			fmt.Printf("Error generating script: %v\n", err)
+			os.Exit(1)
 		}
+
+		fmt.Printf("%s", string(script))
+		os.Exit(0)
 	}
 
 	urls := make([]*url.URL, 0)
