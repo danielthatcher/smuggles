@@ -10,31 +10,36 @@ import (
 	"time"
 )
 
-type baseResult struct {
-	t time.Duration
-	u *url.URL
+type Worker struct {
+	Conf Config
+	Errs chan<- error
 }
 
-// baseWorker fetches urls on a channel and times how long it takes to fetch those URLs
-func baseWorker(urls <-chan *url.URL, results chan<- baseResult, errs chan<- error, done func()) {
+type BaseResult struct {
+	Time time.Duration
+	Url  *url.URL
+}
+
+// BaseTimes fetches urls on a channel and times how long it takes to fetch those URLs
+func (w *Worker) BaseTimes(urls <-chan *url.URL, results chan<- BaseResult, done func()) {
 	for u := range urls {
 		req := baseReq(u)
 		start := time.Now()
-		_, err, _ := sendRequest(req, u, 30*time.Second)
+		_, err, _ := w.SendRequest(req, u, 30*time.Second)
 		end := time.Now()
 		duration := end.Sub(start)
 		if err != nil {
-			errs <- err
+			w.Errs <- err
 			continue
 		}
 
-		results <- baseResult{duration, u}
+		results <- BaseResult{duration, u}
 	}
 	done()
 }
 
-// smuggleType represents the type of smuggling vulnerability - either CL.TE or TE.CL
-type smuggleType string
+// SmuggleType represents the type of smuggling vulnerability - either CL.TE or TE.CL
+type SmuggleType string
 
 const (
 	SAFE = ""
@@ -42,66 +47,66 @@ const (
 	TECL = "TE.CL"
 )
 
-// smuggleTest represents the parameters for a test of CL.TE and TE.CL smuggling against
+// SmuggleTest represents the parameters for a test of CL.TE and TE.CL smuggling against
 // a single URL using a single method and a single Transfer-Encoding header mutation
-type smuggleTest struct {
+type SmuggleTest struct {
 	// The URL to test
-	u *url.URL
+	Url *url.URL
 
-	// The method to test
-	method string
+	// The Method to test
+	Method string
 
-	// The name of the mutation to use. Should be a key in mutations
-	mutation string
+	// The name of the Mutation to use. Should be a key in mutations
+	Mutation string
 
 	// The delay that will indicate the service is vulnerable. Should be calculated off
 	// of the time take for the base request to this service
-	timeout time.Duration
+	Timeout time.Duration
 
 	// The type of attack the service is vulnerable to
-	status smuggleType
+	Status SmuggleType
 }
 
 // smuggleWorker sends requests URLs using the given Transfer-Encoding header,
 // and checks for CL.TE then TE.CL vulnerabilities
-func smuggleWorker(tests <-chan smuggleTest, results chan<- smuggleTest, errs chan<- error, done func()) {
+func (w *Worker) SmuggleTest(tests <-chan SmuggleTest, results chan<- SmuggleTest, done func()) {
 	for t := range tests {
 		// First test for CL.TE
-		req := clte(t.method, t.u, mutations[t.mutation])
-		_, err, isTimeout := sendRequest(req, t.u, t.timeout)
+		req := clte(t.Method, t.Url, w.Conf.Mutations[t.Mutation])
+		_, err, isTimeout := w.SendRequest(req, t.Url, t.Timeout)
 		if isTimeout {
 			// Send the verification request
-			req = clteVerify(t.method, t.u, mutations[t.mutation])
-			_, err, verifyTimeout := sendRequest(req, t.u, t.timeout)
+			req = clteVerify(t.Method, t.Url, w.Conf.Mutations[t.Mutation])
+			_, err, verifyTimeout := w.SendRequest(req, t.Url, t.Timeout)
 
 			if !verifyTimeout {
-				t.status = CLTE
+				t.Status = CLTE
 				results <- t
 				continue
 			} else if err != nil {
-				errs <- err
+				w.Errs <- err
 			}
 		} else if err != nil {
-			errs <- err
+			w.Errs <- err
 		}
 
 		// First test for TE.CL
-		req = tecl(t.method, t.u, mutations[t.mutation])
-		_, err, isTimeout = sendRequest(req, t.u, t.timeout)
+		req = tecl(t.Method, t.Url, w.Conf.Mutations[t.Mutation])
+		_, err, isTimeout = w.SendRequest(req, t.Url, t.Timeout)
 		if isTimeout {
 			// Send the verification request
-			req = teclVerify(t.method, t.u, mutations[t.mutation])
-			_, err, verifyTimeout := sendRequest(req, t.u, t.timeout)
+			req = teclVerify(t.Method, t.Url, w.Conf.Mutations[t.Mutation])
+			_, err, verifyTimeout := w.SendRequest(req, t.Url, t.Timeout)
 
 			if !verifyTimeout {
-				t.status = TECL
+				t.Status = TECL
 				results <- t
 				continue
 			} else if err != nil {
-				errs <- err
+				w.Errs <- err
 			}
 		} else if err != nil {
-			errs <- err
+			w.Errs <- err
 		}
 	}
 	done()
@@ -109,7 +114,7 @@ func smuggleWorker(tests <-chan smuggleTest, results chan<- smuggleTest, errs ch
 
 // sendRequest sends the specified request, but doesn't try to parse the response,
 // and instead just returns it
-func sendRequest(req []byte, u *url.URL, timeout time.Duration) (resp []byte, err error, isTimeout bool) {
+func (w *Worker) SendRequest(req []byte, u *url.URL, timeout time.Duration) (resp []byte, err error, isTimeout bool) {
 	var cerr error
 	var conn io.ReadWriteCloser
 
@@ -156,7 +161,7 @@ func sendRequest(req []byte, u *url.URL, timeout time.Duration) (resp []byte, er
 	}()
 
 	var start time.Time
-	if *debug {
+	if w.Conf.Debug {
 		start = time.Now()
 	}
 
@@ -168,7 +173,7 @@ func sendRequest(req []byte, u *url.URL, timeout time.Duration) (resp []byte, er
 		conn.Close()
 	}
 
-	if *debug {
+	if w.Conf.Debug {
 		d := time.Now().Sub(start)
 		fmt.Printf("Request to %s took %dms (timeout: %t)\n", u.String(), d.Milliseconds(), isTimeout)
 		fmt.Println(string(req))

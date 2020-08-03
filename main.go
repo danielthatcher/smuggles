@@ -22,27 +22,55 @@ import (
 	flag "github.com/spf13/pflag"
 )
 
-var mutations map[string]string
-var debug *bool
+type Config struct {
+	// The number of concurrent workers to test with
+	Workers int
+
+	// The HTTP methods to test
+	Methods []string
+
+	// The delay which signifies a timeout between the frontend and backend servers
+	Delay time.Duration
+
+	// The Transfer-Encoding headers to test
+	Mutations map[string]string
+
+	// The maximum number of desyncs to find in a target
+	StopAfter uint
+
+	// Whether to show the progress bar
+	ShowProgress bool
+
+	// Whether to user verbose or debugging output
+	Verbose bool
+	Debug   bool
+
+	// The filenames to save to
+	OutFilename  string
+	BaseFilename string
+	ErrFilename  string
+}
 
 func main() {
+	conf := Config{}
+
 	// Scanning options
-	workers := flag.IntP("workers", "c", 10, "the number of concurrent workers")
-	methods := flag.StringSliceP("methods", "m", []string{"GET", "POST", "PUT", "DELETE"}, "the methods to test")
-	delay := flag.DurationP("delay", "", 5*time.Second, "the extra time delay on top of the base time that indicates the service is vulnerable")
+	flag.IntVarP(&conf.Workers, "workers", "c", 10, "the number of concurrent workers")
+	flag.StringSliceVarP(&conf.Methods, "methods", "m", []string{"GET", "POST", "PUT", "DELETE"}, "the methods to test")
+	flag.DurationVarP(&conf.Delay, "delay", "", 5*time.Second, "the extra time delay on top of the base time that indicates the service is vulnerable")
 	enabled := flag.StringSliceP("enable", "e", nil, "globs of modules to enable")
 	disabled := flag.StringSliceP("disable", "d", nil, "globs of modules to disable")
-	stopAfter := flag.UintP("stop-after", "x", 0, "the number of smuggling vulnerabilities to find in a host before stopping testing on it. This won't cancel already queued tests, so slightly more than this number of vulnerabilities may be found")
+	flag.UintVarP(&conf.StopAfter, "stop-after", "x", 0, "the number of smuggling vulnerabilities to find in a host before stopping testing on it. This won't cancel already queued tests, so slightly more than this number of vulnerabilities may be found")
 
 	// Output display options
-	showProgress := flag.BoolP("progress", "p", false, "show a progress bar instead of output discovered vulnerabilities to stdout")
-	verbose := flag.BoolP("verbose", "v", false, "print scanned hosts to stdout")
-	debug = flag.BoolP("debug", "", false, "time each request and output the times to stdout")
+	flag.BoolVarP(&conf.ShowProgress, "progress", "p", false, "show a progress bar instead of output discovered vulnerabilities to stdout")
+	flag.BoolVarP(&conf.Verbose, "verbose", "v", false, "print scanned hosts to stdout")
+	flag.BoolVarP(&conf.Debug, "debug", "", false, "time each request and output the times to stdout")
 
 	// Output file options
-	outfilename := flag.StringP("output", "o", "", "the log file to write to")
-	basefilename := flag.StringP("base", "b", "", "the base file with request times to use (default \"smuggles.base\")")
-	errfilename := flag.StringP("error-log", "", "", "the file to log errors to")
+	flag.StringVarP(&conf.OutFilename, "output", "o", "", "the log file to write to")
+	flag.StringVarP(&conf.BaseFilename, "base", "b", "", "the base file with request times to use (default \"smuggles.base\")")
+	flag.StringVarP(&conf.ErrFilename, "error-log", "", "", "the file to log errors to")
 	outDir := flag.StringP("dir", "O", "", "the directory to output the log, error log, and base file to")
 
 	// Early exit flags
@@ -55,7 +83,7 @@ func main() {
 
 	// Generate the enabled mutations
 	all := generateMutations()
-	mutations = make(map[string]string, 0)
+	conf.Mutations = make(map[string]string, 0)
 	for m := range all {
 		include := true
 
@@ -79,15 +107,15 @@ func main() {
 		}
 
 		if include {
-			mutations[m] = all[m]
+			conf.Mutations[m] = all[m]
 		}
 	}
 
 	// Check for options that lead to early exit
 	if *list {
-		keys := make([]string, len(mutations))
+		keys := make([]string, len(conf.Mutations))
 		i := 0
-		for k := range mutations {
+		for k := range conf.Mutations {
 			keys[i] = k
 			i++
 		}
@@ -99,7 +127,7 @@ func main() {
 	}
 
 	if *gadget != "" {
-		header, ok := mutations[*gadget]
+		header, ok := conf.Mutations[*gadget]
 		if ok {
 			fmt.Println(header)
 			os.Exit(0)
@@ -125,7 +153,7 @@ func main() {
 			fmt.Printf("Couldn't parse URL: %v\n", err)
 			os.Exit(1)
 		}
-		mutation, ok := mutations[flag.Arg(3)]
+		mutation, ok := conf.Mutations[flag.Arg(3)]
 		if !ok {
 			fmt.Printf("Mutation %s not found\n", flag.Arg(3))
 			os.Exit(1)
@@ -183,46 +211,46 @@ func main() {
 	var reslog *log.Logger
 	var errlog *log.Logger
 	if *outDir != "" {
-		if *outfilename == "" {
-			*outfilename = path.Join(*outDir, "smuggles.log")
+		if conf.OutFilename == "" {
+			conf.OutFilename = path.Join(*outDir, "smuggles.log")
 		}
-		if *basefilename == "" {
-			*basefilename = path.Join(*outDir, "smuggles.base")
+		if conf.BaseFilename == "" {
+			conf.BaseFilename = path.Join(*outDir, "smuggles.base")
 		}
-		if *errfilename == "" {
-			*errfilename = path.Join(*outDir, "smuggles.errors")
+		if conf.ErrFilename == "" {
+			conf.ErrFilename = path.Join(*outDir, "smuggles.errors")
 		}
 	}
 
-	if *outfilename != "" {
-		f, err := os.OpenFile(*outfilename, os.O_WRONLY|os.O_CREATE, 0644)
+	if conf.OutFilename != "" {
+		f, err := os.OpenFile(conf.OutFilename, os.O_WRONLY|os.O_CREATE, 0644)
 		if err != nil {
 			fmt.Printf("Failed to open log file: %v\n", err)
 			os.Exit(1)
 		}
 		defer f.Close()
 		outputs := []io.Writer{f}
-		if !*showProgress {
+		if !conf.ShowProgress {
 			outputs = append(outputs, os.Stdout)
 		}
 		mw := io.MultiWriter(outputs...)
 		reslog = log.New(mw, "", 0)
-	} else if *showProgress {
+	} else if conf.ShowProgress {
 		fmt.Println("WARNING: progress bar being shown and no output file specified - discovered vulnerabilities will not be outputted anywhere!")
 		reslog = log.New(ioutil.Discard, "", 0)
 	} else {
 		reslog = log.New(os.Stdout, "", 0)
 	}
 
-	if *errfilename != "" {
-		f, err := os.OpenFile(*errfilename, os.O_WRONLY|os.O_CREATE, 0644)
+	if conf.ErrFilename != "" {
+		f, err := os.OpenFile(conf.ErrFilename, os.O_WRONLY|os.O_CREATE, 0644)
 		if err != nil {
 			fmt.Printf("Failed to open error log file: %v\n", err)
 			os.Exit(1)
 		}
 		defer f.Close()
 		outputs := []io.Writer{f}
-		if !*showProgress {
+		if !conf.ShowProgress {
 			outputs = append(outputs, os.Stdout)
 		}
 
@@ -234,10 +262,10 @@ func main() {
 
 	// The base times for standard requests
 	var base map[string]time.Duration
-	if *basefilename == "" {
-		*basefilename = "smuggles.base"
+	if conf.BaseFilename == "" {
+		conf.BaseFilename = "smuggles.base"
 	}
-	baseFile, err := os.OpenFile(*basefilename, os.O_RDWR|os.O_CREATE, 0644)
+	baseFile, err := os.OpenFile(conf.BaseFilename, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		fmt.Printf("Failed to open base file: %v\n", err)
 		os.Exit(1)
@@ -259,22 +287,28 @@ func main() {
 		base = make(map[string]time.Duration, 0)
 	}
 
+	// Genrate the workers
+	workers := make([]Worker, conf.Workers)
+	errs := make(chan error)
+	for i := range workers {
+		workers[i] = Worker{Conf: conf, Errs: errs}
+	}
+
 	// Fill in any missing entries in the base file
 	fmt.Println("Getting missing base times...")
 	baseUrls := make(chan *url.URL)
-	errs := make(chan error)
-	baseResults := make(chan baseResult)
+	baseResults := make(chan BaseResult)
 	baseWg := sync.WaitGroup{}
-	baseWg.Add(*workers)
+	baseWg.Add(conf.Workers)
 	baseMux := sync.RWMutex{}
-	for i := 0; i < *workers; i++ {
-		go baseWorker(baseUrls, baseResults, errs, baseWg.Done)
+	for i := range workers {
+		go workers[i].BaseTimes(baseUrls, baseResults, baseWg.Done)
 	}
 
 	// Read from stdin
 	go func() {
 		var bar *progressbar.ProgressBar
-		if *showProgress {
+		if conf.ShowProgress {
 			bar = progressbar.Default(-1)
 		}
 		scanner := bufio.NewScanner(os.Stdin)
@@ -289,7 +323,7 @@ func main() {
 			baseMux.RUnlock()
 			if !exists {
 				baseUrls <- u
-				if *showProgress {
+				if conf.ShowProgress {
 					bar.Add(1)
 				}
 			}
@@ -313,10 +347,10 @@ func main() {
 
 	for r := range baseResults {
 		baseMux.Lock()
-		base[r.u.String()] = r.t
+		base[r.Url.String()] = r.Time
 		baseMux.Unlock()
-		if *verbose {
-			fmt.Printf("%s %d\n", r.u, r.t)
+		if conf.Verbose {
+			fmt.Printf("%s %d\n", r.Url, r.Time)
 		}
 	}
 
@@ -346,22 +380,22 @@ func main() {
 	vulnsMux := sync.RWMutex{}
 
 	// Generate a slice of all the tests to choose from at random
-	tests := make([]smuggleTest, 0)
+	tests := make([]SmuggleTest, 0)
 	for _, u := range urls {
 		// We only want to run the tests if we have a base time for this URL
 		if _, ok := base[u.String()]; !ok {
 			continue
 		}
 
-		for m := range mutations {
-			for _, v := range *methods {
-				timeout := base[u.String()] + *delay
-				t := smuggleTest{
-					u:        u,
-					method:   v,
-					mutation: m,
-					status:   SAFE,
-					timeout:  timeout,
+		for m := range conf.Mutations {
+			for _, v := range conf.Methods {
+				timeout := base[u.String()] + conf.Delay
+				t := SmuggleTest{
+					Url:      u,
+					Method:   v,
+					Mutation: m,
+					Status:   SAFE,
+					Timeout:  timeout,
 				}
 				tests = append(tests, t)
 			}
@@ -369,18 +403,18 @@ func main() {
 	}
 
 	// Start the workers
-	testsChan := make(chan smuggleTest)
-	testResults := make(chan smuggleTest)
+	testsChan := make(chan SmuggleTest)
+	testResults := make(chan SmuggleTest)
 	testsWg := sync.WaitGroup{}
-	testsWg.Add(*workers)
-	for i := 0; i < *workers; i++ {
-		go smuggleWorker(testsChan, testResults, errs, testsWg.Done)
+	testsWg.Add(conf.Workers)
+	for i := range workers {
+		go workers[i].SmuggleTest(testsChan, testResults, testsWg.Done)
 	}
 
 	// Send tests
 	go func() {
 		var bar *progressbar.ProgressBar
-		if *showProgress {
+		if conf.ShowProgress {
 			bar = progressbar.Default(int64(len(tests)))
 		}
 
@@ -390,20 +424,20 @@ func main() {
 			t := tests[i]
 			tests = append(tests[:i], tests[i+1:]...)
 			send := true
-			if *stopAfter > 0 {
+			if conf.StopAfter > 0 {
 				vulnsMux.RLock()
-				send = vulns[t.u.String()] < *stopAfter
+				send = vulns[t.Url.String()] < conf.StopAfter
 				vulnsMux.RUnlock()
 
 			}
 			if send {
 				testsChan <- t
 			}
-			if *showProgress {
+			if conf.ShowProgress {
 				bar.Add(1)
 			}
-			if *verbose {
-				fmt.Printf("Testing: %s %s %s\n", t.method, t.u, t.mutation)
+			if conf.Verbose {
+				fmt.Printf("Testing: %s %s %s\n", t.Method, t.Url, t.Mutation)
 			}
 		}
 		close(testsChan)
@@ -416,11 +450,11 @@ func main() {
 	}()
 
 	for t := range testResults {
-		if t.status != SAFE {
-			reslog.Printf("%s %s %s %s\n", t.method, t.u, t.status, t.mutation)
-			if *stopAfter > 0 {
+		if t.Status != SAFE {
+			reslog.Printf("%s %s %s %s\n", t.Method, t.Url, t.Status, t.Mutation)
+			if conf.StopAfter > 1 {
 				vulnsMux.Lock()
-				vulns[t.u.String()] += 1
+				vulns[t.Url.String()] += 1
 				vulnsMux.Unlock()
 			}
 		}
