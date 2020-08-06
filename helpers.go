@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 	"text/template"
 )
@@ -73,4 +75,30 @@ func generateScript(conf Config, scriptFile string, method string, uStr string, 
 	}
 
 	return b.Bytes(), nil
+}
+
+// saveState saves the state in a concurrency-safe manner
+func saveState(state *State, stateFile *os.File) error {
+	state.BaseMux.RLock()
+	state.ErrorsMux.RLock()
+	state.ResultsMux.RLock()
+	b, err := json.Marshal(*state)
+	if err != nil {
+		return err
+	}
+	state.BaseMux.RUnlock()
+	state.ErrorsMux.RUnlock()
+	state.ResultsMux.RUnlock()
+
+	_, err = stateFile.Seek(0, 0)
+	if err != nil {
+		return err
+	}
+
+	_, err = stateFile.Write(b)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

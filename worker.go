@@ -70,6 +70,11 @@ type SmuggleTest struct {
 	Status SmuggleType
 }
 
+// Equals returns whether two SmuggleTests are equal
+func (t SmuggleTest) Equals(s SmuggleTest) bool {
+	return t.Url.String() == s.Url.String() && t.Method == s.Method && t.Mutation == s.Mutation
+}
+
 // smuggleWorker sends requests URLs using the given Transfer-Encoding header,
 // and checks for CL.TE then TE.CL vulnerabilities
 func (w *Worker) SmuggleTest(tests <-chan SmuggleTest, results chan<- SmuggleTest, done func()) {
@@ -132,6 +137,8 @@ func (w *Worker) SmuggleTest(tests <-chan SmuggleTest, results chan<- SmuggleTes
 			w.ErrCountsMux.Unlock()
 			w.Errs <- err
 		}
+
+		results <- t
 	}
 	done()
 }

@@ -47,13 +47,32 @@ type Config struct {
 	Debug   bool
 
 	// The filenames to save to
-	OutFilename  string
-	BaseFilename string
-	ErrFilename  string
+	OutFilename   string
+	StateFilename string
+	ErrFilename   string
+
+	// How often to save the state file
+	SaveEvery time.Duration
+}
+
+type State struct {
+	// The base times
+	Base    map[string]time.Duration `json:"base"`
+	BaseMux sync.RWMutex             `json:"-"`
+
+	// Results of smuggling tests
+	Results    []SmuggleTest `json:"results"`
+	ResultsMux sync.RWMutex  `json:"-"`
+
+	// Errors encountered
+	// ErrorsMux is  RWMutex to remain consisted with Worker.ErrorCountsMux
+	Errors    map[string]uint `json:"errors"`
+	ErrorsMux sync.RWMutex    `json:"-"`
 }
 
 func main() {
 	conf := Config{}
+	state := State{}
 
 	// Scanning options
 	flag.IntVarP(&conf.Workers, "workers", "c", 10, "the number of concurrent workers")
@@ -68,10 +87,11 @@ func main() {
 	flag.BoolVarP(&conf.ShowProgress, "progress", "p", false, "show a progress bar instead of output discovered vulnerabilities to stdout")
 	flag.BoolVarP(&conf.Verbose, "verbose", "v", false, "print scanned hosts to stdout")
 	flag.BoolVarP(&conf.Debug, "debug", "", false, "time each request and output the times to stdout")
+	flag.DurationVarP(&conf.SaveEvery, "save-every", "", time.Minute, "time between saves of the state file")
 
 	// Output file options
 	flag.StringVarP(&conf.OutFilename, "output", "o", "", "the log file to write to")
-	flag.StringVarP(&conf.BaseFilename, "base", "b", "", "the base file with request times to use (default \"smuggles.base\")")
+	flag.StringVarP(&conf.StateFilename, "base", "b", "", "the base file with request times to use (default \"smuggles.state\")")
 	flag.StringVarP(&conf.ErrFilename, "error-log", "", "", "the file to log errors to")
 	outDir := flag.StringP("dir", "O", "", "the directory to output the log, error log, and base file to")
 
@@ -181,8 +201,8 @@ func main() {
 		if conf.OutFilename == "" {
 			conf.OutFilename = path.Join(*outDir, "smuggles.log")
 		}
-		if conf.BaseFilename == "" {
-			conf.BaseFilename = path.Join(*outDir, "smuggles.base")
+		if conf.StateFilename == "" {
+			conf.StateFilename = path.Join(*outDir, "smuggles.state")
 		}
 		if conf.ErrFilename == "" {
 			conf.ErrFilename = path.Join(*outDir, "smuggles.errors")
@@ -228,45 +248,58 @@ func main() {
 	}
 
 	// The base times for standard requests
-	var base map[string]time.Duration
-	if conf.BaseFilename == "" {
-		conf.BaseFilename = "smuggles.base"
+	if conf.StateFilename == "" {
+		conf.StateFilename = "smuggles.state"
 	}
-	baseFile, err := os.OpenFile(conf.BaseFilename, os.O_RDWR|os.O_CREATE, 0644)
+	stateFile, err := os.OpenFile(conf.StateFilename, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		fmt.Printf("Failed to open base file: %v\n", err)
 		os.Exit(1)
 	}
-	defer baseFile.Close()
-	jsonBytes, err := ioutil.ReadAll(baseFile)
+	defer stateFile.Close()
+	jsonBytes, err := ioutil.ReadAll(stateFile)
 	if err != nil {
 		fmt.Printf("Failed to read base file: %v\n", err)
 		os.Exit(1)
 	}
 
 	if len(jsonBytes) > 0 {
-		err = json.Unmarshal(jsonBytes, &base)
+		err = json.Unmarshal(jsonBytes, &state)
 		if err != nil {
 			fmt.Printf("Failed to parse base file as JSON: %v\n", err)
 			os.Exit(1)
 		}
 	} else {
-		base = make(map[string]time.Duration, 0)
+		state.Base = make(map[string]time.Duration, 0)
 	}
 
 	// Genrate the workers
-	errCounts := make(map[string]uint, 0)
-	errCountsMux := sync.RWMutex{}
+	if state.Errors == nil {
+		state.Errors = make(map[string]uint, 0)
+	}
+	state.ErrorsMux = sync.RWMutex{}
 	workers := make([]Worker, conf.Workers)
 	errs := make(chan error)
 	for i := range workers {
 		workers[i] = Worker{
 			Conf:         conf,
 			Errs:         errs,
-			ErrCounts:    &errCounts,
-			ErrCountsMux: &errCountsMux,
+			ErrCounts:    &state.Errors,
+			ErrCountsMux: &state.ErrorsMux,
 		}
 	}
+
+	// Periodically save the state file
+	go func() {
+		ticker := time.NewTicker(conf.SaveEvery)
+		for {
+			<-ticker.C
+			err := saveState(&state, stateFile)
+			if err != nil {
+				errlog.Println(err)
+			}
+		}
+	}()
 
 	// Fill in any missing entries in the base file
 	fmt.Println("Getting missing base times...")
@@ -274,7 +307,7 @@ func main() {
 	baseResults := make(chan BaseResult)
 	baseWg := sync.WaitGroup{}
 	baseWg.Add(conf.Workers)
-	baseMux := sync.RWMutex{}
+	state.BaseMux = sync.RWMutex{}
 	for i := range workers {
 		go workers[i].BaseTimes(baseUrls, baseResults, baseWg.Done)
 	}
@@ -292,9 +325,9 @@ func main() {
 			if err != nil {
 				errlog.Println(err)
 			}
-			baseMux.RLock()
-			_, exists := base[u.String()]
-			baseMux.RUnlock()
+			state.BaseMux.RLock()
+			_, exists := state.Base[u.String()]
+			state.BaseMux.RUnlock()
 			if !exists {
 				baseUrls <- u
 				if conf.ShowProgress {
@@ -320,31 +353,13 @@ func main() {
 	}()
 
 	for r := range baseResults {
-		baseMux.Lock()
-		base[r.Url.String()] = r.Time
-		baseMux.Unlock()
+		state.BaseMux.Lock()
+		state.Base[r.Url.String()] = r.Time
+		state.BaseMux.Unlock()
 		if conf.Verbose {
 			fmt.Printf("%s %d\n", r.Url, r.Time)
 		}
 	}
-
-	// Save the file
-	b, err := json.Marshal(base)
-	if err != nil {
-		errlog.Printf("Error marshalling base times to JSON: %v\n", err)
-		return
-	}
-
-	_, err = baseFile.Seek(0, 0)
-	if err != nil {
-		errlog.Printf("Error seeking to start of file: %v\n", err)
-	}
-
-	_, err = baseFile.Write(b)
-	if err != nil {
-		errlog.Printf("Error writing base to file: %v\n", err)
-	}
-	baseFile.Close()
 
 	// Now smuggle test
 	fmt.Println("Testing smuggling...")
@@ -355,15 +370,17 @@ func main() {
 
 	// Generate a slice of all the tests to choose from at random
 	tests := make([]SmuggleTest, 0)
+	state.ResultsMux.RLock()
 	for _, u := range urls {
 		// We only want to run the tests if we have a base time for this URL
-		if _, ok := base[u.String()]; !ok {
+		if _, ok := state.Base[u.String()]; !ok {
 			continue
 		}
 
 		for m := range conf.Mutations {
+		METHODLOOP:
 			for _, v := range conf.Methods {
-				timeout := base[u.String()] + conf.Delay
+				timeout := state.Base[u.String()] + conf.Delay
 				t := SmuggleTest{
 					Url:      u,
 					Method:   v,
@@ -371,10 +388,18 @@ func main() {
 					Status:   SAFE,
 					Timeout:  timeout,
 				}
+
+				// Check the test isn't in the state file, meaning it has already been performed
+				for _, s := range state.Results {
+					if t.Equals(s) {
+						continue METHODLOOP
+					}
+				}
 				tests = append(tests, t)
 			}
 		}
 	}
+	state.ResultsMux.RUnlock()
 
 	// Start the workers
 	testsChan := make(chan SmuggleTest)
@@ -423,6 +448,10 @@ func main() {
 		close(testResults)
 	}()
 
+	// Receive results
+	if state.Results == nil {
+		state.Results = make([]SmuggleTest, 0)
+	}
 	for t := range testResults {
 		if t.Status != SAFE {
 			reslog.Printf("%s %s %s %s\n", t.Method, t.Url, t.Status, t.Mutation)
@@ -432,5 +461,15 @@ func main() {
 				vulnsMux.Unlock()
 			}
 		}
+
+		state.ResultsMux.Lock()
+		state.Results = append(state.Results, t)
+		state.ResultsMux.Unlock()
+	}
+
+	// Save the state one last time
+	err = saveState(&state, stateFile)
+	if err != nil {
+		errlog.Println(err)
 	}
 }
