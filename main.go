@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,6 +27,9 @@ type Config struct {
 
 	// The HTTP methods to test
 	Methods []string
+
+	// The headers to add to requests
+	Headers []string
 
 	// The delay which signifies a timeout between the frontend and backend servers
 	Delay time.Duration
@@ -82,6 +86,7 @@ func main() {
 	disabled := flag.StringSliceP("disable", "d", nil, "globs of modules to disable")
 	flag.UintVarP(&conf.StopAfter, "stop-after", "x", 0, "the number of smuggling vulnerabilities to find in a host before stopping testing on it. This won't cancel already queued tests, so slightly more than this number of vulnerabilities may be found")
 	flag.UintVarP(&conf.MaxErrors, "max-errors", "E", 0, "the number of errors that can be received from a URL before it stops being scanned")
+	customHeaders := flag.StringSliceP("headers", "H", nil, "custom headers to add to requests")
 
 	// Output display options
 	flag.BoolVarP(&conf.ShowProgress, "progress", "p", false, "show a progress bar instead of output discovered vulnerabilities to stdout")
@@ -131,6 +136,32 @@ func main() {
 		if include {
 			conf.Mutations[m] = all[m]
 		}
+	}
+
+	// Set the headers in the config
+	connOverride := false
+	uaOverride := false
+	if customHeaders != nil {
+		for _, h := range *customHeaders {
+			if strings.HasPrefix(h, "User-Agent:") {
+				uaOverride = true
+			} else if strings.HasPrefix(h, "Connection:") {
+				connOverride = true
+			}
+		}
+		conf.Headers = *customHeaders
+	} else {
+		conf.Headers = make([]string, 0)
+	}
+
+	if !uaOverride {
+		ua := "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.135 Safari/537.36 Edge/12.246"
+		conf.Headers = append(conf.Headers, ua)
+	}
+
+	if !connOverride {
+		conn := "Connection: close"
+		conf.Headers = append(conf.Headers, conn)
 	}
 
 	// Check for options that lead to early exit

@@ -24,9 +24,9 @@ func generatePoC(conf Config, method string, uStr string, stype string, mutation
 	}
 
 	if stype == CLTE {
-		return clte(method, u, te), nil
+		return clte(method, u, te, conf.Headers), nil
 	} else if stype == TECL {
-		return tecl(method, u, te), nil
+		return tecl(method, u, te, conf.Headers), nil
 	} else {
 		return nil, fmt.Errorf("unrecognised smuggles type: %s", stype)
 	}

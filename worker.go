@@ -26,7 +26,7 @@ type BaseResult struct {
 // BaseTimes fetches urls on a channel and times how long it takes to fetch those URLs
 func (w *Worker) BaseTimes(urls <-chan *url.URL, results chan<- BaseResult, done func()) {
 	for u := range urls {
-		req := baseReq(u)
+		req := baseReq(u, w.Conf.Headers)
 		start := time.Now()
 		_, err, _ := w.SendRequest(req, u, 30*time.Second)
 		end := time.Now()
@@ -89,11 +89,11 @@ func (w *Worker) SmuggleTest(tests <-chan SmuggleTest, results chan<- SmuggleTes
 		}
 
 		// First test for CL.TE
-		req := clte(t.Method, t.Url, w.Conf.Mutations[t.Mutation])
+		req := clte(t.Method, t.Url, w.Conf.Mutations[t.Mutation], w.Conf.Headers)
 		_, err, isTimeout := w.SendRequest(req, t.Url, t.Timeout)
 		if isTimeout {
 			// Send the verification request
-			req = clteVerify(t.Method, t.Url, w.Conf.Mutations[t.Mutation])
+			req = clteVerify(t.Method, t.Url, w.Conf.Mutations[t.Mutation], w.Conf.Headers)
 			_, err, verifyTimeout := w.SendRequest(req, t.Url, t.Timeout)
 
 			if !verifyTimeout {
@@ -114,11 +114,11 @@ func (w *Worker) SmuggleTest(tests <-chan SmuggleTest, results chan<- SmuggleTes
 		}
 
 		// First test for TE.CL
-		req = tecl(t.Method, t.Url, w.Conf.Mutations[t.Mutation])
+		req = tecl(t.Method, t.Url, w.Conf.Mutations[t.Mutation], w.Conf.Headers)
 		_, err, isTimeout = w.SendRequest(req, t.Url, t.Timeout)
 		if isTimeout {
 			// Send the verification request
-			req = teclVerify(t.Method, t.Url, w.Conf.Mutations[t.Mutation])
+			req = teclVerify(t.Method, t.Url, w.Conf.Mutations[t.Mutation], w.Conf.Headers)
 			_, err, verifyTimeout := w.SendRequest(req, t.Url, t.Timeout)
 
 			if !verifyTimeout {
