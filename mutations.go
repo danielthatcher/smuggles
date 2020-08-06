@@ -33,6 +33,7 @@ func generateMutations() map[string]string {
 	m["colon-pre-nl"] = "Transfer-Encoding\n: chunked"
 	m["colon-post-nl"] = "Transfer-Encoding:\nchunked"
 	m["colon-post-ff"] = "Transfer-Encoding:\xffchunked"
+	m["headername-junk"] = "Transfer-Encoding abcdef: chunked"
 
 	// Quotes
 	m["single-qoute"] = "Transfer-Encoding: 'chunked'"
