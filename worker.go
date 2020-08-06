@@ -75,11 +75,12 @@ type SmuggleTest struct {
 func (w *Worker) SmuggleTest(tests <-chan SmuggleTest, results chan<- SmuggleTest, done func()) {
 	for t := range tests {
 		// Skip test if we've received too many errors for this URL
-		w.ErrCountsMux.RLock()
-		e := (*w.ErrCounts)[t.Url.String()]
-		w.ErrCountsMux.RUnlock()
-		if e > 0 && e >= w.Conf.MaxErrors {
-			continue
+		if w.Conf.MaxErrors > 0 {
+			w.ErrCountsMux.RLock()
+			if (*w.ErrCounts)[t.Url.String()] >= w.Conf.MaxErrors {
+				continue
+			}
+			w.ErrCountsMux.RUnlock()
 		}
 
 		// First test for CL.TE
