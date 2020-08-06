@@ -36,6 +36,9 @@ type Config struct {
 	// The maximum number of desyncs to find in a target
 	StopAfter uint
 
+	// The number of errors to receive from a target URL before stopping scanning it
+	MaxErrors uint
+
 	// Whether to show the progress bar
 	ShowProgress bool
 
@@ -59,6 +62,7 @@ func main() {
 	enabled := flag.StringSliceP("enable", "e", nil, "globs of modules to enable")
 	disabled := flag.StringSliceP("disable", "d", nil, "globs of modules to disable")
 	flag.UintVarP(&conf.StopAfter, "stop-after", "x", 0, "the number of smuggling vulnerabilities to find in a host before stopping testing on it. This won't cancel already queued tests, so slightly more than this number of vulnerabilities may be found")
+	flag.UintVarP(&conf.MaxErrors, "max-errors", "E", 0, "the number of errors that can be received from a URL before it stops being scanned")
 
 	// Output display options
 	flag.BoolVarP(&conf.ShowProgress, "progress", "p", false, "show a progress bar instead of output discovered vulnerabilities to stdout")
@@ -251,10 +255,17 @@ func main() {
 	}
 
 	// Genrate the workers
+	errCounts := make(map[string]uint, 0)
+	errCountsMux := sync.RWMutex{}
 	workers := make([]Worker, conf.Workers)
 	errs := make(chan error)
 	for i := range workers {
-		workers[i] = Worker{Conf: conf, Errs: errs}
+		workers[i] = Worker{
+			Conf:         conf,
+			Errs:         errs,
+			ErrCounts:    &errCounts,
+			ErrCountsMux: &errCountsMux,
+		}
 	}
 
 	// Fill in any missing entries in the base file

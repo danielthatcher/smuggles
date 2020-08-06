@@ -7,12 +7,15 @@ import (
 	"io/ioutil"
 	"net"
 	"net/url"
+	"sync"
 	"time"
 )
 
 type Worker struct {
-	Conf Config
-	Errs chan<- error
+	Conf         Config
+	Errs         chan<- error
+	ErrCounts    *map[string]uint
+	ErrCountsMux *sync.RWMutex
 }
 
 type BaseResult struct {
@@ -71,6 +74,14 @@ type SmuggleTest struct {
 // and checks for CL.TE then TE.CL vulnerabilities
 func (w *Worker) SmuggleTest(tests <-chan SmuggleTest, results chan<- SmuggleTest, done func()) {
 	for t := range tests {
+		// Skip test if we've received too many errors for this URL
+		w.ErrCountsMux.RLock()
+		e := (*w.ErrCounts)[t.Url.String()]
+		w.ErrCountsMux.RUnlock()
+		if e > 0 && e >= w.Conf.MaxErrors {
+			continue
+		}
+
 		// First test for CL.TE
 		req := clte(t.Method, t.Url, w.Conf.Mutations[t.Mutation])
 		_, err, isTimeout := w.SendRequest(req, t.Url, t.Timeout)
@@ -84,9 +95,15 @@ func (w *Worker) SmuggleTest(tests <-chan SmuggleTest, results chan<- SmuggleTes
 				results <- t
 				continue
 			} else if err != nil {
+				w.ErrCountsMux.Lock()
+				(*w.ErrCounts)[t.Url.String()]++
+				w.ErrCountsMux.Unlock()
 				w.Errs <- err
 			}
 		} else if err != nil {
+			w.ErrCountsMux.Lock()
+			(*w.ErrCounts)[t.Url.String()]++
+			w.ErrCountsMux.Unlock()
 			w.Errs <- err
 		}
 
@@ -103,9 +120,15 @@ func (w *Worker) SmuggleTest(tests <-chan SmuggleTest, results chan<- SmuggleTes
 				results <- t
 				continue
 			} else if err != nil {
+				w.ErrCountsMux.Lock()
+				(*w.ErrCounts)[t.Url.String()]++
+				w.ErrCountsMux.Unlock()
 				w.Errs <- err
 			}
 		} else if err != nil {
+			w.ErrCountsMux.Lock()
+			(*w.ErrCounts)[t.Url.String()]++
+			w.ErrCountsMux.Unlock()
 			w.Errs <- err
 		}
 	}
