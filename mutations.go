@@ -61,7 +61,7 @@ func generateMutations() map[string]string {
 
 	// Misc tricks
 	m["connection-te"] = "Connection: Transfer-Encoding\r\nTransfer-Encoding: chunked"
-	m["connection-cl"] = "Connection: Content-Legth\r\nTransfer-Encoding: chunked"
+	m["connection-cl"] = "Connection: Content-Length\r\nTransfer-Encoding: chunked"
 	m["content-encoding"] = "Content-Encoding: chunked"
 
 	// Multiple values of Transfer-Encoding
@@ -77,25 +77,25 @@ func generateMutations() map[string]string {
 		{"chunked", "ch"},
 	}
 	for _, e := range other_encodings {
-		// Mutliple headers with different values
+		// Multiple headers with different values
 		k := fmt.Sprintf("multiple-ch_%s", e[1])
 		m[k] = fmt.Sprintf("Transfer-Encoding: chunked\r\nTransfer-Encoding: %s", e[0])
-		k = fmt.Sprintf("mutliple-%s_ch", e[1])
+		k = fmt.Sprintf("multiple-%s_ch", e[1])
 		m[k] = fmt.Sprintf("Transfer-Encoding: %s\r\nTransfer-Encoding: chunked", e[0])
 
-		// Mutliple values separated by a comma
+		// Multiple values separated by a comma
 		k = fmt.Sprintf("comma-ch_%s", e[1])
 		m[k] = fmt.Sprintf("Transfer-Encoding: chunked, %s", e[0])
 		k = fmt.Sprintf("comma-%s_ch", e[1])
 		m[k] = fmt.Sprintf("Transfer-Encoding: %s, chunked", e[0])
 
-		// Mutliple values separated by a comma with a tab instead of a space
+		// Multiple values separated by a comma with a tab instead of a space
 		k = fmt.Sprintf("commatab-ch_%s", e[1])
 		m[k] = fmt.Sprintf("Transfer-Encoding: chunked,\t%s", e[0])
 		k = fmt.Sprintf("commatab-%s_ch", e[1])
 		m[k] = fmt.Sprintf("Transfer-Encoding: %s,\tchunked", e[0])
 
-		// Mutliple values separated by a space
+		// Multiple values separated by a space
 		k = fmt.Sprintf("spacesep-ch_%s", e[1])
 		m[k] = fmt.Sprintf("Transfer-Encoding: chunked %s", e[0])
 		k = fmt.Sprintf("spacesep-%s_ch", e[1])
