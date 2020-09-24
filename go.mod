@@ -1,4 +1,4 @@
-module gitlab.com/dcthatch/smuggles
+module github.com/danielthatcher/smuggles
 
 go 1.14
 
