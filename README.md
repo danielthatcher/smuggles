@@ -8,9 +8,9 @@ smuggles is an HTTP request smuggling scanner designed to be able to scan thousa
 - a large number of mutations of the `Transfer-Encoding` included in tests
 
 ## Installation
-With a properly configured `$GOPATH`, you can run
+If you have go installed, you can run:
 ```bash
-go get -v github.com/danielthatcher/smuggles
+go install -v github.com/danielthatcher/smuggles@latest
 ```
 
 ## Usage
@@ -25,18 +25,18 @@ When run without any arguments, smuggles will try all mutations with each of the
 ### Selecting mutations
 Mutations can be disabled by specifying the `-d` flag one or more times, each time with a glob the of the mutation names to disable. For example, to disable all mutations which put bytes either side of the colon or which specify multiple values separated by a comma you would run
 ```bash
-spydom -d 'comma-*' -d 'colon-*'
+smuggles -d 'comma-*' -d 'colon-*'
 ```
 
 You can instead enable just a subset of mutations with the `-e` flag, against used one or more times with a glob matching the mutations to enable as the argument. For example, to enable just the line prefix and the uppercase mutations, you would run
 ```bash
-spydom -e 'lineprefix-*' -e uppercase
+smuggles -e 'lineprefix-*' -e uppercase
 ```
 
 ### Selecting methods
 Similarly, custom methods can be specified with the `-m` flag. For example, to only scan with `GET` and `POST` methods, you would run
 ```bash
-spydom -m GET -m POST
+smuggles -m GET -m POST
 ```
 
 ### Output
